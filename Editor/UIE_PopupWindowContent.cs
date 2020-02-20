@@ -7,253 +7,282 @@
 
 namespace Nementic.SelectionUtility
 {
-    using System;
-    using System.Collections.Generic;
-    using System.Linq;
-    using System.Text.RegularExpressions;
-    using UnityEditor;
-    using UnityEditor.UIElements;
-    using UnityEngine;
-    using UnityEngine.UIElements;
+	using System;
+	using System.Collections.Generic;
+	using System.Linq;
+	using System.Text.RegularExpressions;
+	using UnityEditor;
+	using UnityEditor.UIElements;
+	using UnityEngine;
+	using UnityEngine.UIElements;
 
-    /// <summary>
-    ///     The UIElements version of the popup which displays all selectable GameObjects.
-    /// </summary>
-    [Serializable]
-    internal sealed class UIE_PopupWindowContent
-    {
-        private ListView list;
-        private List<GameObject> options;
-        private int rowHeight => 21;
+	/// <summary>
+	///     The UIElements version of the popup which displays all selectable GameObjects.
+	/// </summary>
+	[Serializable]
+	internal sealed class UIE_PopupWindowContent
+	{
+		private ListView list;
+		private List<GameObject> options;
+		private int rowHeight => 21;
 
-        /// Because view data persistence is not implemented for the ToolbarSearchField
-        /// this member is serialized with the class instance.
-        private string searchString;
+		/// Because view data persistence is not implemented for the ToolbarSearchField
+		/// this member is serialized with the class instance.
+		private string searchString;
 
-        private float labelWidth;
-        private float rowWidth;
+		private float labelWidth;
+		private float rowWidth;
 
-        /// These types are not displayed as component icons in the popup window as they would clutter the view.
-        private static readonly HashSet<Type> ignoredIconTypes = new HashSet<Type>()
-        {
-            typeof(Transform),
-            typeof(MeshFilter)
-        };
+		/// These types are not displayed as component icons in the popup window as they would clutter the view.
+		private static readonly HashSet<Type> ignoredIconTypes = new HashSet<Type>()
+		{
+			typeof(Transform),
+			typeof(MeshFilter)
+		};
 
-        private Dictionary<GameObject, HashSet<Texture2D>> iconCache;
+		private Dictionary<GameObject, HashSet<Texture2D>> iconCache;
 
-        public UIE_PopupWindowContent(List<GameObject> options)
-        {
-            this.options = options;
-        }
+		private EditorWindow editorWindow;
+		private ToolbarSearchField searchField;
 
-        public void Build(VisualElement root)
-        {
-            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(
-                "Packages/com.nementic.selection-utility/Editor/UIE_SelectionPopup.uss");
-            root.styleSheets.Add(styleSheet);
+		public UIE_PopupWindowContent(List<GameObject> options, EditorWindow editorWindow)
+		{
+			this.options = options;
+			this.editorWindow = editorWindow;
+		}
 
-            var toolbar = new Toolbar();
-            var searchField = new ToolbarSearchField();
-            searchField.viewDataKey = "ToolbarSearchFieldData";
-            searchField.value = searchString;
-            searchField.RegisterCallback<ChangeEvent<string>>(OnSearchChanged);
-            toolbar.Add(searchField);
-            root.Add(toolbar);
+		public void Build(VisualElement root)
+		{
+			var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(
+				"Packages/com.nementic.selection-utility/Editor/UIE_SelectionPopup.uss");
+			root.styleSheets.Add(styleSheet);
 
-            list = new ListView
-            {
-                itemHeight = rowHeight,
-                makeItem = MakeItem,
-                bindItem = BindItem
-            };
-            list.onSelectionChanged += OnListSelectionChanged;
-            list.selectionType = SelectionType.Multiple;
-            list.viewDataKey = "ListViewDataKey";
-            root.Add(list);
+			var toolbar = new Toolbar();
+			searchField = new ToolbarSearchField
+			{
+				viewDataKey = "ToolbarSearchFieldData",
+				value = searchString
+			};
+			searchField.RegisterCallback<ChangeEvent<string>>(OnSearchChanged);
+			toolbar.Add(searchField);
+			root.Add(toolbar);
 
-            BuildIconCache();
+			list = new ListView
+			{
+				itemHeight = rowHeight,
+				makeItem = MakeItem,
+				bindItem = BindItem
+			};
+			list.onSelectionChanged += OnListSelectionChanged;
+			list.selectionType = SelectionType.Multiple;
+			list.viewDataKey = "ListViewDataKey";
+			root.Add(list);
 
-            RefreshListWithFilter(searchField.value);
-        }
+			BuildIconCache();
 
-        public Vector2 GetWindowSize()
-        {
-            CalculateLabelAndRowWidths();
+			RefreshListWithFilter(searchField.value);
+		}
 
-            int rows = 2 + options.Count;
-            float height = rowHeight * options.Count;
-            height += EditorGUIUtility.standardVerticalSpacing;
-            height += 21; // Toolbar height.
+		public Vector2 GetWindowSize()
+		{
+			CalculateLabelAndRowWidths();
 
-            float preIconWidth = 22f;
-            var size = new Vector2(preIconWidth + rowWidth, height - 2);
+			int rows = 2 + options.Count;
+			float height = rowHeight * options.Count;
+			height += EditorGUIUtility.standardVerticalSpacing;
+			height += 21; // Toolbar height.
 
-            int maxHeight = Mathf.Min(Screen.currentResolution.height, 800);
-            if (height > maxHeight)
-            {
-                size.y = maxHeight;
-                size.x += 14; // Extra size to fit vertical scroll bar without clipping icons.
-            }
+			float preIconWidth = 22f;
+			var size = new Vector2(preIconWidth + rowWidth, height - 2);
 
-            return size;
-        }
+			int maxHeight = Mathf.Min(Screen.currentResolution.height, 800);
+			if (height > maxHeight)
+			{
+				size.y = maxHeight;
+				size.x += 14; // Extra size to fit vertical scroll bar without clipping icons.
+			}
 
-        private void CalculateLabelAndRowWidths()
-        {
-            labelWidth = 0;
+			return size;
+		}
 
-            for (int i = 0; i < options.Count; i++)
-            {
-                // TODO: This may no longer be correct for uielements.
-                float width = options[i] != null ? GUI.skin.label.CalcSize(new GUIContent(options[i].name)).x : 0f;
+		private void CalculateLabelAndRowWidths()
+		{
+			labelWidth = 0;
 
-                // If a GameObject name is excessively long, clip it.
-                int maxWidth = 300;
-                if (width > maxWidth)
-                    width = maxWidth;
+			for (int i = 0; i < options.Count; i++)
+			{
+				// TODO: This may no longer be correct for uielements.
+				// Also, this dependency should be removed to allow window resizing outside of the GUI loop.
+				float width = options[i] != null ? GUI.skin.label.CalcSize(new GUIContent(options[i].name)).x : 0f;
 
-                if (width > labelWidth)
-                    labelWidth = width;
-            }
+				// If a GameObject name is excessively long, clip it.
+				int maxWidth = 300;
+				if (width > maxWidth)
+					width = maxWidth;
 
-            // After button, add small space.
-            labelWidth += EditorGUIUtility.standardVerticalSpacing;
+				if (width > labelWidth)
+					labelWidth = width;
+			}
 
-            BuildIconCache();
-            float iconWidth = 0;
+			// After button, add small space.
+			labelWidth += EditorGUIUtility.standardVerticalSpacing;
 
-            for (int i = 0; i < options.Count; i++)
-            {
-                if (options[i] == null)
-                    continue;
+			BuildIconCache();
+			float iconWidth = 0;
 
-                float iconWidthTmp = (18 * iconCache[options[i]].Count);
+			for (int i = 0; i < options.Count; i++)
+			{
+				if (options[i] == null)
+					continue;
 
-                if (iconWidthTmp > iconWidth)
-                    iconWidth = iconWidthTmp;
-            }
+				float iconWidthTmp = (18 * iconCache[options[i]].Count);
 
-            this.rowWidth = labelWidth + iconWidth + EditorGUIUtility.standardVerticalSpacing;
-        }
+				if (iconWidthTmp > iconWidth)
+					iconWidth = iconWidthTmp;
+			}
 
-        private void BuildIconCache()
-        {
-            if (iconCache != null)
-                return;
+			this.rowWidth = labelWidth + iconWidth + EditorGUIUtility.standardVerticalSpacing;
+		}
 
-            iconCache = new Dictionary<GameObject, HashSet<Texture2D>>(32);
+		private void BuildIconCache()
+		{
+			if (iconCache != null)
+				return;
 
-            for (int i = 0; i < options.Count; i++)
-            {
-                if (options[i] == null)
-                    continue;
+			iconCache = new Dictionary<GameObject, HashSet<Texture2D>>(32);
 
-                var components = options[i].GetComponents<Component>();
+			for (int i = 0; i < options.Count; i++)
+			{
+				if (options[i] == null)
+					continue;
 
-                var displayedIcons = new HashSet<Texture2D>();
+				var components = options[i].GetComponents<Component>();
 
-                for (int j = 0; j < components.Length; j++)
-                {
-                    var type = components[j].GetType();
+				var displayedIcons = new HashSet<Texture2D>();
 
-                    if (ignoredIconTypes.Contains(type))
-                        continue;
+				for (int j = 0; j < components.Length; j++)
+				{
+					var type = components[j].GetType();
 
-                    // This returns an icon for many builtin components such as Transform and Collider.
-                    Texture2D componentIcon = AssetPreview.GetMiniThumbnail(components[j]);
+					if (ignoredIconTypes.Contains(type))
+						continue;
 
-                    if (displayedIcons.Contains(componentIcon))
-                        continue;
+					// This returns an icon for many builtin components such as Transform and Collider.
+					Texture2D componentIcon = AssetPreview.GetMiniThumbnail(components[j]);
 
-                    displayedIcons.Add(componentIcon);
-                }
+					if (displayedIcons.Contains(componentIcon))
+						continue;
 
-                iconCache.Add(options[i], displayedIcons);
-            }
-        }
+					displayedIcons.Add(componentIcon);
+				}
 
-        private void OnSearchChanged(ChangeEvent<string> evt)
-        {
-            this.searchString = evt.newValue ?? string.Empty;
+				iconCache.Add(options[i], displayedIcons);
+			}
+		}
 
-            // To polish the search experience:
-            // - Ignore multiple spaces in a row by collapsing them down to a single one.
-            // - Remove white space at the start and end of the search string.
-            // - Ignore letter case.
-            string value = Regex.Replace(searchString.Trim(), @"[ ]+", " ");
-            RefreshListWithFilter(value);
-        }
+		private void OnSearchChanged(ChangeEvent<string> evt)
+		{
+			this.searchString = evt.newValue ?? string.Empty;
 
-        private void RefreshListWithFilter(string searchString)
-        {
-            if (searchString == null)
-                searchString = string.Empty;
+			// To polish the search experience:
+			// - Ignore multiple spaces in a row by collapsing them down to a single one.
+			// - Remove white space at the start and end of the search string.
+			// - Ignore letter case.
+			string value = Regex.Replace(searchString.Trim(), @"[ ]+", " ");
+			RefreshListWithFilter(value);
+		}
 
-            var filteredOptions = options.Where(
-                x => x.name.IndexOf(searchString, StringComparison.InvariantCultureIgnoreCase) >= 0).ToList();
+		private void RefreshListWithFilter(string searchString)
+		{
+			if (searchString == null)
+				searchString = string.Empty;
 
-            list.itemsSource = filteredOptions;
-            list.Refresh();
-        }
+			var filteredOptions = options.Where(
+				x => x.name.IndexOf(searchString, StringComparison.InvariantCultureIgnoreCase) >= 0).ToList();
 
-        private VisualElement MakeItem()
-        {
-            var row = new VisualElement() { name = "RowTemplate" };
-            var icon = new VisualElement() { name = "Icon" };
-            var label = new Label();
-            var container = new VisualElement() { name = "ComponentIconContainer" };
-            var separator = new VisualElement();
-            separator.AddToClassList("separator");
+			list.itemsSource = filteredOptions;
+			list.Refresh();
+		}
 
-            row.Add(icon);
-            row.Add(icon);
-            row.Add(label);
-            row.Add(container);
-            row.Add(separator);
+		private VisualElement MakeItem()
+		{
+			var row = new VisualElement() { name = "RowTemplate" };
+			var icon = new VisualElement() { name = "Icon" };
+			var label = new Label();
+			var container = new VisualElement() { name = "ComponentIconContainer" };
+			var separator = new VisualElement();
+			separator.AddToClassList("separator");
 
-            return row;
-        }
+			row.Add(icon);
+			row.Add(icon);
+			row.Add(label);
+			row.Add(container);
+			row.Add(separator);
 
-        private void BindItem(VisualElement element, int index)
-        {
-            GameObject target = (GameObject)list.itemsSource[index];
+			return row;
+		}
 
-            var label = element.Q<Label>();
-            label.text = target != null ? target.name : "Null";
-            label.style.width = labelWidth;
+		private void BindItem(VisualElement element, int index)
+		{
+			GameObject target = (GameObject)list.itemsSource[index];
 
-            // Indicate prefabs with a blue label.
-            if (PrefabUtility.IsPartOfAnyPrefab(target))
-                label.AddToClassList("prefab-label");
-            else
-                label.RemoveFromClassList("prefab-label");
+			var label = element.Q<Label>();
+			label.text = target != null ? target.name : "Null";
+			label.style.width = labelWidth;
 
-            Texture2D iconTexture = AssetPreview.GetMiniThumbnail(target);
-            var iconElement = element.Q("Icon");
-            iconElement.style.backgroundImage = iconTexture;
-            iconElement.style.height = iconElement.style.width = 16;
+			// Indicate prefabs with a blue label.
+			if (PrefabUtility.IsPartOfAnyPrefab(target))
+				label.AddToClassList("prefab-label");
+			else
+				label.RemoveFromClassList("prefab-label");
 
-            var container = element.Q("ComponentIconContainer");
-            container.Clear();
+			Texture2D iconTexture = AssetPreview.GetMiniThumbnail(target);
+			var iconElement = element.Q("Icon");
+			iconElement.style.backgroundImage = iconTexture;
+			iconElement.style.height = iconElement.style.width = 16;
 
-            if (iconCache.ContainsKey(target))
-            {
-                foreach (var icon in iconCache[target])
-                {
-                    var componentIcon = new VisualElement();
-                    componentIcon.style.backgroundImage = icon;
-                    componentIcon.style.width = componentIcon.style.height = 16;
-                    container.Add(componentIcon);
-                }
-            }
-        }
+			var container = element.Q("ComponentIconContainer");
+			container.Clear();
 
-        private void OnListSelectionChanged(List<object> listItems)
-        {
-            Selection.objects = listItems.ConvertAll(x => (UnityEngine.Object)x).ToArray();
-        }
-    }
+			if (iconCache.ContainsKey(target))
+			{
+				foreach (var icon in iconCache[target])
+				{
+					var componentIcon = new VisualElement();
+					componentIcon.style.backgroundImage = icon;
+					componentIcon.style.width = componentIcon.style.height = 16;
+					container.Add(componentIcon);
+				}
+			}
+		}
+
+		private void OnListSelectionChanged(List<object> listItems)
+		{
+			Selection.objects = listItems.ConvertAll(x => (UnityEngine.Object)x).ToArray();
+		}
+
+		public bool RemoveInvalidTargets(out int optionsCount)
+		{
+			// Check for destroyed targets and remove them.
+			bool changed = false;
+
+			for (int i = options.Count - 1; i >= 0; i--)
+			{
+				if (options[i] == null)
+				{
+					options.RemoveAt(i);
+					changed = true;
+				}
+			}
+
+			optionsCount = options.Count;
+
+			if (changed && optionsCount > 0)
+				RefreshListWithFilter(searchField.value);
+
+			return changed;
+		}
+	}
 }
 
 #endif
