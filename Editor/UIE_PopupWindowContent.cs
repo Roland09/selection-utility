@@ -87,7 +87,6 @@ namespace Nementic.SelectionUtility
 		{
 			CalculateLabelAndRowWidths();
 
-			int rows = 2 + options.Count;
 			float height = rowHeight * options.Count;
 			height += EditorGUIUtility.standardVerticalSpacing;
 			height += 21; // Toolbar height.
@@ -259,6 +258,9 @@ namespace Nementic.SelectionUtility
 		private void OnListSelectionChanged(List<object> listItems)
 		{
 			Selection.objects = listItems.ConvertAll(x => (UnityEngine.Object)x).ToArray();
+
+			if (editorWindow != null)
+				editorWindow.Close();
 		}
 
 		public bool RemoveInvalidTargets(out int optionsCount)
