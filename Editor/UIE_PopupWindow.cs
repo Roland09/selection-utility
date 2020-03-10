@@ -7,46 +7,79 @@
 
 namespace Nementic.SelectionUtility
 {
-    using UnityEditor;
-    using UnityEngine;
+	using UnityEditor;
+	using UnityEngine;
 
-    /// <summary>
-    /// A popup-styled editor window which can be shown by providing
-    /// an activator rect. This replicates the core functionality of
-    /// <see cref="UnityEditor.PopupWindow"/>. Not to be confused with
-    /// the unluckily named <see cref="UnityEngine.UIElements.PopupWindow"/>, which
-    /// only describes an element with similar styling.
-    /// </summary>
-    internal class UIE_PopupWindow : EditorWindow
-    {
-        private UIE_PopupWindowContent content;
+	/// <summary>
+	/// A popup-styled editor window which can be shown by providing
+	/// an activator rect. This replicates the core functionality of
+	/// <see cref="UnityEditor.PopupWindow"/>. Not to be confused with
+	/// the unluckily named <see cref="UnityEngine.UIElements.PopupWindow"/>, which
+	/// only describes an element with similar styling.
+	/// </summary>
+	internal class UIE_PopupWindow : EditorWindow
+	{
+		private UIE_PopupWindowContent content;
 
-        public void Show(Rect activatorRect, UIE_PopupWindowContent content)
-        {
-            base.hideFlags = HideFlags.DontSave;
-            base.wantsMouseMove = true;
+		public void Show(Rect activatorRect, UIE_PopupWindowContent content)
+		{
+			base.hideFlags = HideFlags.DontSave;
+			base.wantsMouseMove = true;
 
-            this.content = content;
+			this.content = content;
 
-            Vector2 size = content.GetWindowSize();
-            content.Build(rootVisualElement);
+			Vector2 size = content.GetWindowSize();
+			content.Build(rootVisualElement);
 
-            activatorRect = GUIUtility.GUIToScreenRect(activatorRect);
-            base.ShowAsDropDown(activatorRect, size);
-        }
+			activatorRect = GUIUtility.GUIToScreenRect(activatorRect);
+			base.ShowAsDropDown(activatorRect, size);
+		}
 
-        private void OnEnable()
-        {
-            // Rebuild the content after domain reload.
-            if (content != null)
-                content.Build(rootVisualElement);
-        }
+		private void OnEnable()
+		{
+			// Rebuild the content after domain reload.
+			if (content != null)
+				content.Build(rootVisualElement);
+		}
 
-        private void OnLostFocus()
-        {
-            base.Close();
-        }
-    }
+		private void OnHierarchyChange()
+		{
+			// When the hierarchy changes, check for deleted target objects
+			// and remove them from the list.
+			if (content.RemoveInvalidTargets(out int optionsCount))
+			{
+				if (optionsCount == 0)
+					Close();
+				else
+				{
+					// This is a workaround for the issue, that its currently not possible
+					// to calculate the required window size outside of OnGUI. a limitation
+					// that exists because UIE_PopupWindowContent.GetWindowSize uses GUI.skin.
+					recalculateSizeNextFrame = true;
+				}
+			}
+		}
+
+		private bool recalculateSizeNextFrame;
+
+		private void OnGUI()
+		{
+			if (recalculateSizeNextFrame)
+			{
+				recalculateSizeNextFrame = false;
+
+				var windowRect = base.position;
+				windowRect.size = content.GetWindowSize();
+				base.minSize = windowRect.size;
+				base.position = windowRect;
+			}
+		}
+
+		private void OnLostFocus()
+		{
+			base.Close();
+		}
+	}
 }
 
 #endif
